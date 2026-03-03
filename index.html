@@ -104,8 +104,8 @@
                 <option value="contract">Contract / Legal</option>
             </select>
             <button class="btn-extract" id="extractBtn" disabled>Extract Data</button>
-            <input type="text" id="apiUrl" placeholder="API URL" value="https://ocr.kaeva.app" 
-                   style="padding:10px 16px; border-radius:8px; border:1px solid #333; background:#1a1a1a; color:#e0e0e0; font-size:0.85rem; width:280px;">
+            <input type="text" id="apiUrl" placeholder="API URL" value="" 
+                   style="padding:10px 16px; border-radius:8px; border:1px solid #333; background:#1a1a1a; color:#666; font-size:0.85rem; width:280px;" onfocus="if(!this.value)this.style.color='#e0e0e0'" oninput="this.style.color='#e0e0e0'">
         </div>
         <div class="templates-info">💡 Choose a template for optimized extraction, or use General for any document type.</div>
 
