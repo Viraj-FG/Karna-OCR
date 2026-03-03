@@ -80,6 +80,22 @@ class ExtractionResponse(BaseModel):
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
+def load_image(raw_bytes: bytes) -> Image.Image:
+    """Load image from bytes, handling TIFF, PDF, and standard formats."""
+    try:
+        return Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+    except Exception:
+        pass
+    # PDF fallback: try first page via pdf2image if available
+    try:
+        from pdf2image import convert_from_bytes
+        pages = convert_from_bytes(raw_bytes, first_page=1, last_page=1, dpi=200)
+        if pages:
+            return pages[0].convert("RGB")
+    except ImportError:
+        pass
+    raise HTTPException(400, "Unsupported file format. Use PNG, JPG, TIFF, BMP, WebP, or PDF.")
+
 def image_to_base64(img: Image.Image) -> str:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -149,10 +165,12 @@ async def extract_from_json(req: ExtractionRequest):
     t0 = time.time()
 
     if req.image_base64:
-        b64 = req.image_base64
+        raw_bytes = base64.b64decode(req.image_base64)
+        img = load_image(raw_bytes)
+        b64 = image_to_base64(img)
     elif req.image_url:
         r = requests.get(req.image_url, timeout=30)
-        img = Image.open(io.BytesIO(r.content)).convert("RGB")
+        img = load_image(r.content)
         b64 = image_to_base64(img)
     else:
         raise HTTPException(400, "Provide image_base64 or image_url")
@@ -181,7 +199,7 @@ async def extract_from_upload(
     t0 = time.time()
 
     contents = await file.read()
-    img = Image.open(io.BytesIO(contents)).convert("RGB")
+    img = load_image(contents)
     b64 = image_to_base64(img)
 
     p = resolve_prompt(prompt, prompt_template)
@@ -204,7 +222,7 @@ async def extract_batch(files: list[UploadFile] = File(...), prompt_template: Op
     for file in files:
         t0 = time.time()
         contents = await file.read()
-        img = Image.open(io.BytesIO(contents)).convert("RGB")
+        img = load_image(contents)
         b64 = image_to_base64(img)
         raw = call_vlm(b64, p)
         parsed = parse_json_output(raw)

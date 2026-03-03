@@ -50,8 +50,9 @@
             background: #111; border: 1px solid #222; border-radius: 12px;
             padding: 20px; min-height: 200px; display: none;
         }
-        .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
         .result-header h3 { font-size: 1.1rem; }
+        .result-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
         .result-meta { color: #888; font-size: 0.85rem; }
         .result-json {
             background: #0d0d0d; border-radius: 8px; padding: 16px;
@@ -59,9 +60,22 @@
             font-size: 0.85rem; line-height: 1.6; max-height: 500px; overflow-y: auto;
             white-space: pre-wrap; word-break: break-word;
         }
-        .copy-btn {
-            padding: 6px 14px; font-size: 0.8rem; background: #222; border-color: #444;
+        .action-btn {
+            padding: 6px 14px; font-size: 0.8rem; background: #222; border: 1px solid #444;
+            border-radius: 6px; color: #ccc; cursor: pointer; transition: all 0.2s;
         }
+        .action-btn:hover { background: #333; border-color: #6c63ff; color: #fff; }
+        .action-btn.primary { background: #6c63ff; border-color: #6c63ff; color: #fff; }
+        .action-btn.primary:hover { background: #5a52d5; }
+        
+        .output-toggle { display: flex; gap: 0; margin-bottom: 16px; }
+        .toggle-btn {
+            padding: 8px 18px; font-size: 0.85rem; background: #1a1a1a; border: 1px solid #333;
+            color: #888; cursor: pointer; transition: all 0.2s;
+        }
+        .toggle-btn:first-child { border-radius: 8px 0 0 8px; }
+        .toggle-btn:last-child { border-radius: 0 8px 8px 0; }
+        .toggle-btn.active { background: #6c63ff; border-color: #6c63ff; color: #fff; }
         
         .status { padding: 12px 20px; border-radius: 8px; margin-bottom: 16px; display: none; }
         .status.loading { display: block; background: #1a1a2e; border: 1px solid #6c63ff; color: #9d97ff; }
@@ -88,10 +102,10 @@
         <p class="subtitle">Document Intelligence Engine — extract structured data from any document using AI vision</p>
 
         <div class="upload-zone" id="dropZone">
-            <input type="file" id="fileInput" accept="image/*,.tif,.tiff,.pdf">
+            <input type="file" id="fileInput" accept="image/*,.tif,.tiff,.pdf,.bmp,.webp">
             <div class="upload-icon">📄</div>
             <div class="upload-text">Drop your document here or <strong>click to browse</strong></div>
-            <div style="color:#555; margin-top:8px; font-size:0.85rem;">PNG, JPG, TIFF, BMP, WebP</div>
+            <div style="color:#555; margin-top:8px; font-size:0.85rem;">PNG, JPG, TIFF, BMP, WebP, PDF</div>
         </div>
 
         <div class="controls">
@@ -118,12 +132,19 @@
                 <div class="result-box" id="resultBox">
                     <div class="result-header">
                         <h3>Extracted Data</h3>
-                        <div>
-                            <span class="result-meta" id="resultMeta"></span>
-                            <button class="copy-btn" id="copyBtn" onclick="copyResult()">Copy JSON</button>
-                        </div>
+                        <span class="result-meta" id="resultMeta"></span>
+                    </div>
+                    <div class="output-toggle">
+                        <button class="toggle-btn active" id="toggleFields" onclick="switchView('fields')">📋 Fields</button>
+                        <button class="toggle-btn" id="toggleFullText" onclick="switchView('fulltext')">📝 Full Text</button>
                     </div>
                     <div class="result-json" id="resultJson"></div>
+                    <div class="result-actions" style="margin-top: 16px;">
+                        <button class="action-btn" onclick="copyResult()">📋 Copy</button>
+                        <button class="action-btn primary" onclick="downloadResult('json')">⬇ Download JSON</button>
+                        <button class="action-btn" onclick="downloadResult('txt')">⬇ Download TXT</button>
+                        <button class="action-btn" onclick="downloadResult('csv')">⬇ Download CSV</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -138,12 +159,16 @@
         const fileInput = document.getElementById('fileInput');
         const extractBtn = document.getElementById('extractBtn');
         const previewImg = document.getElementById('previewImg');
-        const status = document.getElementById('status');
+        const statusEl = document.getElementById('status');
         const resultBox = document.getElementById('resultBox');
         const resultJson = document.getElementById('resultJson');
         const resultMeta = document.getElementById('resultMeta');
 
         let selectedFile = null;
+        let lastResult = null;      // parsed JSON (fields view)
+        let lastRawOutput = null;   // raw model text (full text view)
+        let currentView = 'fields';
+        let lastFileName = 'document';
 
         // Drag & drop
         dropZone.addEventListener('click', () => fileInput.click());
@@ -158,11 +183,14 @@
 
         function handleFile(file) {
             selectedFile = file;
+            lastFileName = file.name.replace(/\.[^.]+$/, '');
             extractBtn.disabled = false;
             dropZone.querySelector('.upload-text').innerHTML = `<strong>${file.name}</strong> (${(file.size/1024).toFixed(0)} KB)`;
             
+            // Preview — works for images; TIFF/PDF may not render but that's fine
             const reader = new FileReader();
             reader.onload = e => { previewImg.src = e.target.result; previewImg.style.display = 'block'; };
+            reader.onerror = () => { previewImg.style.display = 'none'; };
             reader.readAsDataURL(file);
         }
 
@@ -173,8 +201,8 @@
             const template = document.getElementById('templateSelect').value;
             
             extractBtn.disabled = true;
-            status.className = 'status loading';
-            status.innerHTML = '<span class="spinner"></span>Extracting data — this may take 10-30 seconds...';
+            statusEl.className = 'status loading';
+            statusEl.innerHTML = '<span class="spinner"></span>Extracting data — this may take 10-30 seconds...';
             resultBox.style.display = 'none';
 
             const formData = new FormData();
@@ -190,26 +218,101 @@
 
                 const data = await resp.json();
                 
-                status.className = 'status success';
-                status.textContent = `✅ Extraction complete in ${elapsed}s`;
+                lastResult = data.data;
+                lastRawOutput = data.raw_output;
+                
+                statusEl.className = 'status success';
+                statusEl.textContent = `✅ Extraction complete in ${elapsed}s`;
                 
                 resultBox.style.display = 'block';
-                resultMeta.textContent = `${data.processing_time_ms}ms server • ${elapsed}s total`;
+                resultMeta.textContent = `${data.processing_time_ms}ms server · ${elapsed}s total`;
                 
-                const display = data.data || data.raw_output;
-                resultJson.textContent = typeof display === 'object' ? JSON.stringify(display, null, 2) : display;
+                switchView('fields');
             } catch (err) {
-                status.className = 'status error';
-                status.textContent = `❌ Error: ${err.message}`;
+                statusEl.className = 'status error';
+                statusEl.textContent = `❌ Error: ${err.message}`;
             }
             
             extractBtn.disabled = false;
         });
 
+        function switchView(view) {
+            currentView = view;
+            document.getElementById('toggleFields').classList.toggle('active', view === 'fields');
+            document.getElementById('toggleFullText').classList.toggle('active', view === 'fulltext');
+            
+            if (view === 'fields' && lastResult) {
+                resultJson.textContent = JSON.stringify(lastResult, null, 2);
+            } else if (view === 'fulltext' && lastRawOutput) {
+                resultJson.textContent = lastRawOutput;
+            } else if (lastRawOutput) {
+                resultJson.textContent = lastRawOutput;
+            }
+        }
+
         function copyResult() {
             navigator.clipboard.writeText(resultJson.textContent);
-            document.getElementById('copyBtn').textContent = 'Copied!';
-            setTimeout(() => document.getElementById('copyBtn').textContent = 'Copy JSON', 2000);
+            event.target.textContent = '✅ Copied!';
+            setTimeout(() => event.target.textContent = '📋 Copy', 2000);
+        }
+
+        function flattenFields(obj, prefix) {
+            let rows = [];
+            for (const [k, v] of Object.entries(obj)) {
+                const key = prefix ? `${prefix} > ${k}` : k;
+                if (v && typeof v === 'object' && !Array.isArray(v)) {
+                    if ('value' in v) {
+                        rows.push({ field: key, value: v.value, confidence: v.confidence, type: v.type });
+                    } else {
+                        rows.push(...flattenFields(v, key));
+                    }
+                } else {
+                    rows.push({ field: key, value: String(v), confidence: '', type: '' });
+                }
+            }
+            return rows;
+        }
+
+        function downloadResult(format) {
+            let content, mime, ext;
+            
+            if (format === 'json') {
+                const data = currentView === 'fulltext' ? { full_text: lastRawOutput } : lastResult || { raw: lastRawOutput };
+                content = JSON.stringify(data, null, 2);
+                mime = 'application/json';
+                ext = 'json';
+            } else if (format === 'txt') {
+                if (currentView === 'fulltext' || !lastResult) {
+                    content = lastRawOutput || '';
+                } else {
+                    const rows = flattenFields(lastResult, '');
+                    content = rows.map(r => {
+                        let line = `${r.field}: ${r.value}`;
+                        if (r.confidence) line += ` (confidence: ${r.confidence})`;
+                        if (r.type) line += ` [${r.type}]`;
+                        return line;
+                    }).join('\n');
+                }
+                mime = 'text/plain';
+                ext = 'txt';
+            } else if (format === 'csv') {
+                const rows = lastResult ? flattenFields(lastResult, '') : [];
+                const header = 'Field,Value,Confidence,Type';
+                const csvRows = rows.map(r => 
+                    `"${(r.field||'').replace(/"/g,'""')}","${(String(r.value)||'').replace(/"/g,'""')}","${r.confidence||''}","${r.type||''}"`
+                );
+                content = [header, ...csvRows].join('\n');
+                mime = 'text/csv';
+                ext = 'csv';
+            }
+
+            const blob = new Blob([content], { type: mime });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${lastFileName}_karna_ocr.${ext}`;
+            a.click();
+            URL.revokeObjectURL(url);
         }
     </script>
 </body>
