@@ -6,7 +6,7 @@ Extracts structured data from any document: forms, invoices, contracts,
 handwritten notes, receipts, tables, medical records, and more.
 """
 
-import base64, io, os, time, json, logging
+import base64, io, os, time, json, logging, zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -327,3 +327,60 @@ async def extract_batch(files: list[UploadFile] = File(...), prompt_template: Op
             "processing_time_ms": int((time.time() - t0) * 1000),
         })
     return {"results": results, "total": len(results)}
+
+SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".pdf"}
+
+@app.post("/extract/zip")
+async def extract_from_zip(
+    file: UploadFile = File(...),
+    prompt_template: Optional[str] = Form(None),
+    output_format: Optional[str] = Form("json"),
+):
+    """Extract data from all supported files inside a .zip archive. Returns JSON or JSONL."""
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(400, "Please upload a .zip file")
+
+    contents = await file.read()
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(contents))
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "Invalid or corrupted .zip file")
+
+    p = resolve_prompt(None, prompt_template)
+    results = []
+    names = sorted([n for n in zf.namelist() if not n.startswith("__MACOSX") and Path(n).suffix.lower() in SUPPORTED_EXTENSIONS])
+
+    for name in names:
+        t0 = time.time()
+        try:
+            raw_bytes = zf.read(name)
+            img = load_image(raw_bytes)
+            try:
+                img_orig = Image.open(io.BytesIO(raw_bytes))
+                meta = extract_metadata(raw_bytes, img_orig, Path(name).name)
+            except Exception:
+                meta = MetadataResponse(filename=Path(name).name, file_size_bytes=len(raw_bytes))
+            b64 = image_to_base64(img)
+            raw = call_vlm(b64, p)
+            parsed = parse_json_output(raw)
+            results.append({
+                "filename": name,
+                "status": "ok",
+                "data": parsed,
+                "raw_output": raw,
+                "metadata": meta.model_dump(),
+                "processing_time_ms": int((time.time() - t0) * 1000),
+            })
+        except Exception as e:
+            results.append({
+                "filename": name,
+                "status": "error",
+                "error": str(e),
+                "processing_time_ms": int((time.time() - t0) * 1000),
+            })
+
+    if output_format == "jsonl":
+        lines = [json.dumps(r, ensure_ascii=False) for r in results]
+        return JSONResponse(content={"format": "jsonl", "data": "\n".join(lines), "total": len(results), "succeeded": sum(1 for r in results if r["status"] == "ok")})
+
+    return {"format": "json", "results": results, "total": len(results), "succeeded": sum(1 for r in results if r["status"] == "ok")}
